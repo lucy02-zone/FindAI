@@ -32,7 +32,7 @@ pnpm-debug.log*
 *.onnx
 *.safetensors
 *.faiss
-models/
+/models/
 
 # Editor and OS files
 .DS_Store
