@@ -1,6 +1,9 @@
-import ast
+import importlib.util
+from io import StringIO
 from pathlib import Path
 
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 
 MIGRATION_PATH = (
     Path(__file__).resolve().parents[1]
@@ -9,68 +12,53 @@ MIGRATION_PATH = (
     / "20261025_01_create_users_table.py"
 )
 
+spec = importlib.util.spec_from_file_location(
+    "findai_initial_user_migration",
+    MIGRATION_PATH,
+)
+assert spec is not None and spec.loader is not None
+migration = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(migration)
 
-def test_initial_user_migration_declares_only_users_table_operations() -> None:
-    source = MIGRATION_PATH.read_text(encoding="utf-8")
-    tree = ast.parse(source)
 
-    def operation_calls(function_name: str) -> list[ast.Call]:
-        function = next(
-            node
-            for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == function_name
-        )
-        return [
-            statement.value
-            for statement in function.body
-            if isinstance(statement, ast.Expr)
-            and isinstance(statement.value, ast.Call)
-            and isinstance(statement.value.func, ast.Attribute)
-            and isinstance(statement.value.func.value, ast.Name)
-            and statement.value.func.value.id == "op"
-        ]
+def _render_migration(operation_name: str) -> str:
+    output = StringIO()
+    context = MigrationContext.configure(
+        dialect_name="mysql",
+        opts={"as_sql": True, "output_buffer": output},
+    )
+    with Operations.context(context):
+        getattr(migration, operation_name)()
+    return output.getvalue().lower()
 
-    upgrades = operation_calls("upgrade")
-    downgrades = operation_calls("downgrade")
 
-    assert [call.func.attr for call in upgrades] == [
-        "create_table",
-        "create_index",
-        "create_index",
-    ]
-    create_table = upgrades[0]
-    assert ast.literal_eval(create_table.args[0]) == "users"
-    columns = {
-        ast.literal_eval(column.args[0])
-        for column in create_table.args[1:]
-        if isinstance(column, ast.Call)
-        and isinstance(column.func, ast.Attribute)
-        and column.func.attr == "Column"
-    }
-    assert columns == {
-        "id",
-        "username",
-        "email",
-        "hashed_password",
-        "is_active",
-        "created_at",
-        "updated_at",
-    }
-    for index_call in upgrades[1:]:
-        assert ast.literal_eval(index_call.args[1]) == "users"
-        assert index_call.keywords[0].arg == "unique"
-        assert ast.literal_eval(index_call.keywords[0].value) is True
+def test_initial_migration_renders_expected_users_schema() -> None:
+    sql = _render_migration("upgrade")
 
-    assert [call.func.attr for call in downgrades] == [
-        "drop_index",
-        "drop_index",
-        "drop_table",
-    ]
-    for index_call in downgrades[:2]:
-        table_name = next(
-            keyword.value
-            for keyword in index_call.keywords
-            if keyword.arg == "table_name"
-        )
-        assert ast.literal_eval(table_name) == "users"
-    assert ast.literal_eval(downgrades[2].args[0]) == "users"
+    expected_fragments = (
+        "create table users (",
+        "id integer not null auto_increment",
+        "username varchar(50) not null",
+        "email varchar(255) not null",
+        "hashed_password varchar(255) not null",
+        "is_active bool not null",
+        "created_at datetime not null default current_timestamp",
+        "updated_at datetime not null default current_timestamp",
+        "primary key (id)",
+        "create unique index ix_users_username on users (username)",
+        "create unique index ix_users_email on users (email)",
+    )
+    for fragment in expected_fragments:
+        assert fragment in sql
+
+    assert sql.count("create table ") == 1
+    assert "create table other_" not in sql
+
+
+def test_initial_migration_downgrade_removes_only_users_objects() -> None:
+    sql = _render_migration("downgrade")
+
+    assert "drop index ix_users_email on users" in sql
+    assert "drop index ix_users_username on users" in sql
+    assert "drop table users" in sql
+    assert sql.count("drop table ") == 1
