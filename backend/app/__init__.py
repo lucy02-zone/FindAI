@@ -1,0 +1,1 @@
+"""FindAI backend application package."""
