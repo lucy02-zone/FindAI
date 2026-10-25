@@ -1,16 +1,12 @@
-import os
-
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
+from app.core.config import settings
 
-load_dotenv()
+app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
 
-app = FastAPI(title="FindAI API", version="0.1.0")
-
-frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+frontend_url = settings.FRONTEND_URL.rstrip("/")
 allowed_origins = list(
     dict.fromkeys([frontend_url, "http://127.0.0.1:5173"])
 )
@@ -29,7 +25,7 @@ app.include_router(health_router)
 @app.get("/")
 def read_root() -> dict[str, str]:
     return {
-        "message": "Welcome to FindAI API",
-        "application": "FindAI",
+        "message": f"Welcome to {settings.APP_NAME}",
+        "application": settings.APP_NAME,
         "docs": "/docs",
     }
