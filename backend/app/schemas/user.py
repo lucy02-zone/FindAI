@@ -35,6 +35,13 @@ class UserLogin(BaseModel):
     password: LoginPassword
 
 
+class PasswordChangeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: LoginPassword
+    new_password: Password
+
+
 class UserProfileUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -58,6 +65,10 @@ class UserProfileUpdate(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class PasswordChangeResponse(BaseModel):
+    message: str = "Password updated successfully"
 
 
 class UserResponse(BaseModel):
