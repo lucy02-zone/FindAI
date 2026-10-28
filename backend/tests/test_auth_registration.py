@@ -4,6 +4,7 @@ from unittest.mock import Mock
 import pytest
 from fastapi import HTTPException, status
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 
 from app.api import auth
 from app.schemas.user import UserCreate, UserResponse

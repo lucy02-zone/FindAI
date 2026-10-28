@@ -3,10 +3,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.security import hash_password
+from app.core.config import settings
+from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
 from app.models import User
-from app.schemas.user import UserCreate, UserResponse
+from app.schemas.user import TokenResponse, UserCreate, UserLogin, UserResponse
 
 router = APIRouter()
 
@@ -56,3 +57,34 @@ def register_user(
         ) from None
 
     return UserResponse.model_validate(user)
+
+
+@router.post("/login", response_model=TokenResponse)
+def login_user(
+    credentials: UserLogin,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    email = str(credentials.email).strip().casefold()
+    try:
+        user = db.scalar(select(User).where(User.email == email))
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service unavailable",
+        ) from None
+
+    if user is None or not verify_password(credentials.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        token = create_access_token(str(user.id))
+    except RuntimeError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service unavailable",
+        ) from None
+    return TokenResponse(access_token=token)
