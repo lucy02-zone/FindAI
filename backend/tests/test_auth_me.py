@@ -90,6 +90,39 @@ def test_current_user_dependency_rejects_invalid_token(token, auth_settings):
     db.scalar.assert_not_called()
 
 
+def test_invalid_token_diagnostics_do_not_log_token_or_secret(auth_settings, caplog):
+    token_marker = "sensitive-token-marker"
+    token = credentials(token_marker)
+
+    with pytest.raises(HTTPException):
+        dependencies.get_current_user(token, Mock())
+
+    assert "JWT signature or claims validation" in caplog.text
+    assert token_marker not in caplog.text
+    assert auth_settings.JWT_SECRET_KEY not in caplog.text
+
+
+def test_repeated_bearer_prefix_is_normalized_and_token_still_verified(
+    auth_settings,
+    caplog,
+):
+    token = make_token()
+    double_prefixed = HTTPAuthorizationCredentials(
+        scheme="Bearer",
+        credentials=f"Bearer {token}",
+    )
+    user = profile_user()
+    db = Mock()
+    db.scalar.return_value = user
+
+    result = dependencies.get_current_user(double_prefixed, db)
+
+    assert result is user
+    assert "repeated Bearer scheme" in caplog.text
+    assert token not in caplog.text
+    assert auth_settings.JWT_SECRET_KEY not in caplog.text
+
+
 def test_current_user_dependency_rejects_expired_token(auth_settings):
     token = make_token(expires_at=datetime(2000, 1, 1, tzinfo=timezone.utc))
     db = Mock()

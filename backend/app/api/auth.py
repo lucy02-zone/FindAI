@@ -1,10 +1,12 @@
+import logging
+import traceback
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
-from app.core.config import settings
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
 from app.models import User
@@ -20,6 +22,22 @@ from app.schemas.user import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _log_login_failure(stage: str, error: Exception) -> None:
+    """Log stack locations and exception type without logging exception values."""
+    frames = traceback.extract_tb(error.__traceback__)
+    stack = "\n".join(
+        f'  File "{frame.filename}", line {frame.lineno}, in {frame.name}'
+        for frame in frames
+    )
+    logger.error(
+        "Login %s failed with %s; traceback follows:\n%s",
+        stage,
+        type(error).__name__,
+        stack,
+    )
 
 
 @router.post(
@@ -77,17 +95,36 @@ def login_user(
     email = str(credentials.email).strip().casefold()
     try:
         user = db.scalar(select(User).where(User.email == email))
-    except SQLAlchemyError:
+    except SQLAlchemyError as error:
+        _log_login_failure("database lookup", error)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service unavailable",
+        ) from None
+    except Exception as error:
+        _log_login_failure("database lookup", error)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication service unavailable",
         ) from None
 
-    if (
-        user is None
-        or not user.is_active
-        or not verify_password(credentials.password, user.hashed_password)
-    ):
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        password_valid = verify_password(credentials.password, user.hashed_password)
+    except Exception as error:
+        _log_login_failure("password verification", error)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service unavailable",
+        ) from None
+
+    if not password_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -96,7 +133,8 @@ def login_user(
 
     try:
         token = create_access_token(str(user.id))
-    except RuntimeError:
+    except Exception as error:
+        _log_login_failure("token creation", error)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication service unavailable",

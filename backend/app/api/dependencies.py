@@ -1,3 +1,5 @@
+import logging
+import traceback
 from typing import Annotated
 
 import jwt
@@ -12,6 +14,26 @@ from app.db.session import get_db
 from app.models import User
 
 bearer_scheme = HTTPBearer(auto_error=False)
+logger = logging.getLogger(__name__)
+
+
+def _log_auth_failure(stage: str, error: Exception | None = None) -> None:
+    """Log safe auth diagnostics without headers, exception values, or claims."""
+    if error is None:
+        logger.warning("Bearer authentication rejected at %s", stage)
+        return
+
+    frames = traceback.extract_tb(error.__traceback__)
+    stack = "\n".join(
+        f'  File "{frame.filename}", line {frame.lineno}, in {frame.name}'
+        for frame in frames
+    )
+    logger.error(
+        "Bearer authentication failed at %s with %s; traceback follows:\n%s",
+        stage,
+        type(error).__name__,
+        stack,
+    )
 
 
 def get_current_user(
@@ -29,13 +51,24 @@ def get_current_user(
     )
 
     if credentials is None or credentials.scheme.lower() != "bearer":
+        _log_auth_failure("Authorization header parsing")
         raise unauthorized
+    token = credentials.credentials.strip()
+    if token.lower().startswith("bearer "):
+        logger.warning(
+            "Authorization credential contained a repeated Bearer scheme; normalizing before JWT validation"
+        )
+        token = token[7:].strip()
     if not settings.JWT_SECRET_KEY:
-        raise unauthorized
+        logger.error("Bearer authentication unavailable: JWT signing key is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service unavailable",
+        )
 
     try:
         claims = jwt.decode(
-            credentials.credentials,
+            token,
             settings.JWT_SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM],
         )
@@ -45,17 +78,29 @@ def get_current_user(
         user_id = int(subject)
         if user_id <= 0 or user_id > 2_147_483_647:
             raise unauthorized
-    except (jwt.PyJWTError, ValueError, TypeError):
+    except (jwt.PyJWTError, ValueError, TypeError) as error:
+        _log_auth_failure("JWT signature or claims validation", error)
         raise unauthorized from None
 
     try:
         user = db.scalar(select(User).where(User.id == user_id))
-    except SQLAlchemyError:
+    except SQLAlchemyError as error:
+        _log_auth_failure("current-user database lookup", error)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service unavailable",
+        ) from None
+    except Exception as error:
+        _log_auth_failure("current-user database lookup", error)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication service unavailable",
         ) from None
 
-    if user is None or not user.is_active:
+    if user is None:
+        _log_auth_failure("current-user lookup returned no user")
+        raise unauthorized
+    if not user.is_active:
+        _log_auth_failure("account status check")
         raise unauthorized
     return user
