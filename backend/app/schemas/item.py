@@ -92,6 +92,10 @@ class LostItemResponse(BaseModel):
     updated_at: datetime
 
 
+class LostItemImageUploadResponse(BaseModel):
+    image_path: str
+
+
 class LostItemListQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
