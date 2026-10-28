@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 ItemTitle = Annotated[
     str,
@@ -14,6 +14,10 @@ ItemCategory = Annotated[
 ItemLocation = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
+]
+ItemStatus = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=20),
 ]
 
 
@@ -48,3 +52,12 @@ class LostItemResponse(BaseModel):
     user_id: int
     created_at: datetime
     updated_at: datetime
+
+
+class LostItemListQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    skip: Annotated[int, Field(ge=0)] = 0
+    limit: Annotated[int, Field(ge=1, le=100)] = 20
+    category: ItemCategory | None = None
+    status: ItemStatus | None = None
