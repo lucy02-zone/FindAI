@@ -29,7 +29,7 @@ def login_payload(email="ALICE@Example.COM", password="correct horse battery sta
 
 
 def test_login_returns_signed_token_with_subject_and_expiry(monkeypatch, jwt_settings):
-    user = SimpleNamespace(id=42, hashed_password="stored-hash")
+    user = SimpleNamespace(id=42, hashed_password="stored-hash", is_active=True)
     db = Mock()
     db.scalar.return_value = user
     monkeypatch.setattr(auth, "verify_password", Mock(return_value=True))
@@ -56,7 +56,11 @@ def test_login_returns_signed_token_with_subject_and_expiry(monkeypatch, jwt_set
 @pytest.mark.parametrize("found_user", [True, False], ids=["incorrect-password", "unknown-email"])
 def test_invalid_login_uses_same_safe_unauthorized_response(monkeypatch, found_user):
     db = Mock()
-    db.scalar.return_value = SimpleNamespace(hashed_password="stored-hash") if found_user else None
+    db.scalar.return_value = (
+        SimpleNamespace(hashed_password="stored-hash", is_active=True)
+        if found_user
+        else None
+    )
     verifier = Mock(return_value=False)
     monkeypatch.setattr(auth, "verify_password", verifier)
 

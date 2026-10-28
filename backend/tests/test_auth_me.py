@@ -142,6 +142,19 @@ def test_current_user_dependency_rejects_deleted_user(auth_settings):
     assert error.value.headers == {"WWW-Authenticate": "Bearer"}
 
 
+def test_current_user_dependency_rejects_deactivated_user(auth_settings):
+    db = Mock()
+    deactivated_user = profile_user()
+    deactivated_user.is_active = False
+    db.scalar.return_value = deactivated_user
+
+    with pytest.raises(HTTPException) as error:
+        dependencies.get_current_user(credentials(make_token()), db)
+
+    assert error.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert error.value.headers == {"WWW-Authenticate": "Bearer"}
+
+
 def test_me_returns_safe_profile_fields_only():
     response = auth.read_current_user(profile_user())
     result = response.model_dump()

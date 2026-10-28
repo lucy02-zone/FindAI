@@ -42,6 +42,12 @@ class PasswordChangeRequest(BaseModel):
     new_password: Password
 
 
+class AccountDeactivationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: LoginPassword
+
+
 class UserProfileUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -69,6 +75,10 @@ class TokenResponse(BaseModel):
 
 class PasswordChangeResponse(BaseModel):
     message: str = "Password updated successfully"
+
+
+class AccountDeactivationResponse(BaseModel):
+    message: str = "Account deactivated successfully"
 
 
 class UserResponse(BaseModel):

@@ -56,6 +56,6 @@ def get_current_user(
             detail="Authentication service unavailable",
         ) from None
 
-    if user is None:
+    if user is None or not user.is_active:
         raise unauthorized
     return user

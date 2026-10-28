@@ -11,6 +11,8 @@ from app.models import User
 from app.schemas.user import (
     PasswordChangeRequest,
     PasswordChangeResponse,
+    AccountDeactivationRequest,
+    AccountDeactivationResponse,
     TokenResponse,
     UserCreate,
     UserLogin,
@@ -81,7 +83,11 @@ def login_user(
             detail="Authentication service unavailable",
         ) from None
 
-    if user is None or not verify_password(credentials.password, user.hashed_password):
+    if (
+        user is None
+        or not user.is_active
+        or not verify_password(credentials.password, user.hashed_password)
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -140,3 +146,34 @@ def change_password(
         ) from None
 
     return PasswordChangeResponse()
+
+
+@router.post(
+    "/deactivate",
+    response_model=AccountDeactivationResponse,
+)
+def deactivate_account(
+    request: AccountDeactivationRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AccountDeactivationResponse:
+    if not verify_password(request.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+
+    current_user.is_active = False
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        try:
+            db.rollback()
+        except SQLAlchemyError:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Account deactivation service unavailable",
+        ) from None
+
+    return AccountDeactivationResponse()
