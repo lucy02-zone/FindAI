@@ -5,7 +5,17 @@ import warnings
 from pathlib import Path as FilesystemPath
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Path, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Path,
+    Response,
+    UploadFile,
+    status,
+)
+from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -42,19 +52,31 @@ def _upload_root() -> FilesystemPath:
     return root.resolve()
 
 
+def _stored_upload_filename(relative_path: str | None) -> str | None:
+    if not relative_path or "\\" in relative_path:
+        return None
+    reference = FilesystemPath(relative_path)
+    if (
+        reference.is_absolute()
+        or len(reference.parts) != 2
+        or reference.parts[0] != "uploads"
+        or reference.parts[1] in {"", ".", ".."}
+    ):
+        return None
+    filename = reference.parts[1]
+    if reference.suffix.lower() not in {".jpg", ".png", ".webp"}:
+        return None
+    if len(reference.stem) != 32 or any(
+        character not in "0123456789abcdef" for character in reference.stem.lower()
+    ):
+        return None
+    return filename
+
+
 def _remove_owned_upload(root: FilesystemPath, relative_path: str | None) -> None:
     """Remove only a generated file directly inside the configured upload root."""
-    if not relative_path:
-        return
-    candidate = FilesystemPath(relative_path)
-    if (
-        candidate.is_absolute()
-        or len(candidate.parts) != 2
-        or candidate.parts[0] != "uploads"
-    ):
-        return
-    filename = candidate.parts[1]
-    if not filename or FilesystemPath(filename).name != filename:
+    filename = _stored_upload_filename(relative_path)
+    if filename is None:
         return
     path = root / filename
     try:
@@ -62,6 +84,38 @@ def _remove_owned_upload(root: FilesystemPath, relative_path: str | None) -> Non
             path.unlink()
     except OSError:
         logger.warning("Unable to remove replaced item image")
+
+
+def _resolve_item_image(root: FilesystemPath, relative_path: str | None):
+    """Resolve only uploader-generated references directly beneath the storage root."""
+    filename = _stored_upload_filename(relative_path)
+    if filename is None:
+        return None
+
+    candidate = root / filename
+    try:
+        if candidate.is_symlink():
+            return None
+        resolved = candidate.resolve(strict=True)
+        if resolved.parent != root or not resolved.is_file():
+            return None
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(resolved) as stored_image:
+                image_type = ALLOWED_IMAGE_TYPES.get(stored_image.format or "")
+                if image_type is None:
+                    return None
+                stored_image.verify()
+        return resolved, image_type
+    except (
+        FileNotFoundError,
+        NotADirectoryError,
+        UnidentifiedImageError,
+        OSError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ):
+        return None
 
 
 @router.post("", response_model=LostItemResponse, status_code=status.HTTP_201_CREATED)
@@ -236,6 +290,62 @@ def delete_lost_item(
         ) from None
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/{item_id}/image",
+    response_class=FileResponse,
+    responses={
+        200: {
+            "content": {
+                media_type: {"schema": {"type": "string", "format": "binary"}}
+                for media_type, _ in ALLOWED_IMAGE_TYPES.values()
+            }
+        },
+        404: {"description": "Image not found"},
+    },
+)
+def get_lost_item_image(
+    item_id: PositiveItemId,
+    _current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    try:
+        lost_item = db.get(LostItem, item_id)
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Lost item is temporarily unavailable",
+        ) from None
+
+    if lost_item is None or not lost_item.image_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Image not found",
+        )
+
+    try:
+        root = _upload_root()
+    except OSError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Image is temporarily unavailable",
+        ) from None
+    resolved_image = _resolve_item_image(root, lost_item.image_path)
+    if resolved_image is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Image not found",
+        )
+
+    image_path, (media_type, extension) = resolved_image
+    return FileResponse(
+        path=image_path,
+        media_type=media_type,
+        filename=f"lost-item-{item_id}{extension}",
+        content_disposition_type="inline",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.post(

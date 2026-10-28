@@ -147,9 +147,9 @@ def test_database_failure_rolls_back_and_removes_new_file(setup_upload):
 def test_database_failure_keeps_existing_image(setup_upload):
     owner, item, db, root = setup_upload
     root.mkdir()
-    previous_file = root / "previous.jpg"
+    previous_file = root / ("c" * 32 + ".jpg")
     previous_file.write_bytes(b"previous image")
-    item.image_path = "uploads/previous.jpg"
+    item.image_path = f"uploads/{previous_file.name}"
     db.commit.side_effect = SQLAlchemyError("database failure")
 
     with pytest.raises(HTTPException):
@@ -161,9 +161,9 @@ def test_database_failure_keeps_existing_image(setup_upload):
 def test_replacement_removes_old_owned_image_only_after_commit(setup_upload):
     owner, item, db, root = setup_upload
     root.mkdir()
-    old_path = root / "old.jpg"
+    old_path = root / ("d" * 32 + ".jpg")
     old_path.write_bytes(b"old file")
-    item.image_path = "uploads/old.jpg"
+    item.image_path = f"uploads/{old_path.name}"
 
     response = call_upload(item.id, upload(make_image()), owner, db)
 
@@ -173,7 +173,11 @@ def test_replacement_removes_old_owned_image_only_after_commit(setup_upload):
 
 
 def test_upload_route_requires_auth_and_multipart_file_field():
-    route = next(route for route in items.router.routes if route.path == "/{item_id}/image")
+    route = next(
+        route
+        for route in items.router.routes
+        if route.path == "/{item_id}/image" and "POST" in route.methods
+    )
     openapi = app.openapi()["paths"]["/api/items/{item_id}/image"]["post"]
     assert "POST" in route.methods
     assert any(dependency.call is dependencies.get_current_user for dependency in route.dependant.dependencies)
