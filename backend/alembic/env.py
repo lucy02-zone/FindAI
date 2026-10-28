@@ -4,7 +4,7 @@ from alembic import context
 
 from app.db.base import Base
 from app.db.session import DATABASE_URL, engine
-from app.models import User  # noqa: F401 - registers model metadata for Alembic
+from app.models import LostItem, User  # noqa: F401 - registers metadata for Alembic
 
 config = context.config
 
