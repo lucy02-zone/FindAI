@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -11,6 +11,7 @@ from app.models import LostItem, User
 from app.schemas.item import LostItemCreate, LostItemListQuery, LostItemResponse
 
 router = APIRouter()
+PositiveItemId = Annotated[int, Path(gt=0)]
 
 
 @router.post("", response_model=LostItemResponse, status_code=status.HTTP_201_CREATED)
@@ -71,3 +72,26 @@ def list_lost_items(
         ) from None
 
     return [LostItemResponse.model_validate(item) for item in lost_items]
+
+
+@router.get("/{item_id}", response_model=LostItemResponse)
+def get_lost_item(
+    item_id: PositiveItemId,
+    _current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> LostItemResponse:
+    try:
+        lost_item = db.get(LostItem, item_id)
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Lost item is temporarily unavailable",
+        ) from None
+
+    if lost_item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lost item not found",
+        )
+
+    return LostItemResponse.model_validate(lost_item)
