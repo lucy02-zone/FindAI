@@ -1,7 +1,15 @@
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 Username = Annotated[
     str,
@@ -25,6 +33,26 @@ class UserLogin(BaseModel):
 
     email: EmailAddress
     password: LoginPassword
+
+
+class UserProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: Username | None = None
+    email: EmailAddress | None = None
+
+    @field_validator("username", "email", mode="before")
+    @classmethod
+    def reject_null_updates(cls, value):
+        if value is None:
+            raise ValueError("A profile field cannot be null")
+        return value
+
+    @model_validator(mode="after")
+    def require_at_least_one_field(self):
+        if not self.model_fields_set:
+            raise ValueError("At least one profile field must be provided")
+        return self
 
 
 class TokenResponse(BaseModel):
