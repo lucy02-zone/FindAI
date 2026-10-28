@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -145,3 +145,49 @@ def update_lost_item(
         ) from None
 
     return LostItemResponse.model_validate(lost_item)
+
+
+@router.delete(
+    "/{item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
+def delete_lost_item(
+    item_id: PositiveItemId,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    try:
+        lost_item = db.get(LostItem, item_id)
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Lost item is temporarily unavailable",
+        ) from None
+
+    if lost_item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lost item not found",
+        )
+    if lost_item.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to delete this item",
+        )
+
+    try:
+        db.delete(lost_item)
+        db.commit()
+    except SQLAlchemyError:
+        try:
+            db.rollback()
+        except SQLAlchemyError:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Lost item could not be deleted",
+        ) from None
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
