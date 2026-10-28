@@ -49,6 +49,8 @@ def test_login_returns_signed_token_with_subject_and_expiry(monkeypatch, jwt_set
     assert "alice@example.com" in str(query.compile(compile_kwargs={"literal_binds": True}))
     assert "password" not in response.model_dump()
     assert "hashed_password" not in response.model_dump()
+    login_route = next(route for route in auth.router.routes if route.path == "/login")
+    assert login_route.response_model is TokenResponse
 
 
 @pytest.mark.parametrize("found_user", [True, False], ids=["incorrect-password", "unknown-email"])
